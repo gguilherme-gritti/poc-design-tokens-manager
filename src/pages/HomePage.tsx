@@ -1,69 +1,80 @@
-import { useState } from 'react';
-import { Palette, Sparkles } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Hash, Sparkles } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
+import { TokenTree } from '@/components/token-tree';
+import type { TokenSelectHandler } from '@/components/token-tree';
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import dictionary from '@/dictionary/dictionary-example.json';
 
-// Página de exemplo: prova que Tailwind + Shadcn estão funcionando
-// (cores via CSS vars, dark mode via classe `.dark` no <html>).
+interface SelectedToken {
+  path: string;
+  value: unknown;
+}
+
 export function HomePage() {
-  const [tokenName, setTokenName] = useState('');
+  const [selected, setSelected] = useState<SelectedToken | null>(null);
+
+  const handleSelect = useCallback<TokenSelectHandler>((path, value) => {
+    setSelected({ path, value });
+  }, []);
 
   return (
-    <main className="bg-background text-foreground min-h-svh w-full">
-      <div className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-16">
-        <header className="flex flex-col gap-2">
+    <SidebarProvider
+      style={
+        {
+          // Deixa a sidebar um pouco mais larga, como o Explorer do VSCode.
+          '--sidebar-width': '20rem',
+        } as React.CSSProperties
+      }
+    >
+      <TokenTree
+        title="Design Tokens"
+        data={dictionary}
+        onTokenSelect={handleSelect}
+      />
+
+      <main className="bg-background text-foreground flex min-h-svh w-full flex-col">
+        <header className="flex flex-col gap-1 border-b px-8 py-6">
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
             <Sparkles className="size-4" />
-            <span>POC inicializada com sucesso</span>
+            <span>POC — Design Tokens Manager</span>
           </div>
-          <h1 className="text-4xl font-semibold tracking-tight">
-            Design Tokens Manager
-          </h1>
-          <p className="text-muted-foreground text-base">
-            Scaffold React + Vite + Tailwind v4 + Shadcn/UI pronto para começar.
+          <h1 className="text-3xl font-semibold tracking-tight">Token Explorer</h1>
+          <p className="text-muted-foreground text-sm">
+            Selecione um token na árvore à esquerda para ver seus detalhes.
           </p>
         </header>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Palette className="size-5" />
-              Criar novo token
-            </CardTitle>
-            <CardDescription>
-              Exemplo de formulário usando os componentes Shadcn (Card, Input,
-              Button).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <Input
-              placeholder="Ex.: color.primary.500"
-              value={tokenName}
-              onChange={(e) => setTokenName(e.target.value)}
-            />
-            <p className="text-muted-foreground text-xs">
-              {tokenName
-                ? `Pré-visualização: "${tokenName}"`
-                : 'Digite um nome para o token...'}
-            </p>
-          </CardContent>
-          <CardFooter className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setTokenName('')}>
-              Limpar
-            </Button>
-            <Button disabled={!tokenName}>Salvar token</Button>
-          </CardFooter>
-        </Card>
-      </div>
-    </main>
+        <div className="flex flex-1 flex-col gap-6 px-8 py-8">
+          {selected ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Hash className="size-4" />
+                  <span className="font-mono text-sm">{selected.path}</span>
+                </CardTitle>
+                <CardDescription>Valor bruto do token selecionado.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <pre className="bg-muted/50 overflow-auto rounded-md border p-4 text-xs leading-relaxed">
+                  {JSON.stringify(selected.value, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="text-muted-foreground flex flex-1 items-center justify-center rounded-lg border border-dashed p-12 text-sm">
+              Nenhum token selecionado.
+            </div>
+          )}
+        </div>
+      </main>
+    </SidebarProvider>
   );
 }
