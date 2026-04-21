@@ -56,9 +56,9 @@ export const TokenTree = memo(function TokenTree({
   }, [tree, query]);
 
   const handleSelect = useCallback<TokenSelectHandler>(
-    (path, value) => {
+    (path, value, node) => {
       storeRef.current.select(path);
-      onTokenSelect?.(path, value);
+      onTokenSelect?.(path, value, node);
     },
     [onTokenSelect],
   );

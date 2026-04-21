@@ -30,4 +30,13 @@ export interface TokenLeafNode {
 
 export type TokenNode = TokenBranchNode | TokenLeafNode;
 
-export type TokenSelectHandler = (path: string, value: unknown) => void;
+/**
+ * Disparado ao clicar em uma folha da árvore.
+ * O `node` é fornecido como terceiro argumento para casos onde o consumidor precisa
+ * dos metadados (tipo, attributes, etc.) — ex.: renderizar um preview.
+ */
+export type TokenSelectHandler = (
+  path: string,
+  value: unknown,
+  node: TokenLeafNode,
+) => void;

@@ -1,8 +1,14 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Hash, Sparkles } from 'lucide-react';
 
-import { TokenTree } from '@/components/token-tree';
-import type { TokenSelectHandler } from '@/components/token-tree';
+import {
+  TokenPreview,
+  TokenTree,
+  buildTokenIndex,
+  buildTokenTree,
+  type TokenLeafNode,
+  type TokenSelectHandler,
+} from '@/components/token-tree';
 import {
   Card,
   CardContent,
@@ -13,23 +19,29 @@ import {
 import { SidebarProvider } from '@/components/ui/sidebar';
 import dictionary from '@/dictionary/dictionary-example.json';
 
-interface SelectedToken {
-  path: string;
-  value: unknown;
-}
-
 export function HomePage() {
-  const [selected, setSelected] = useState<SelectedToken | null>(null);
+  const [selected, setSelected] = useState<TokenLeafNode | null>(null);
 
-  const handleSelect = useCallback<TokenSelectHandler>((path, value) => {
-    setSelected({ path, value });
+  /**
+   * Índice de tokens para o preview resolver aliases (`{color.grey.500}`) e
+   * referências aninhadas em shadows, text-styles, etc.
+   */
+  const tokenIndex = useMemo(() => {
+    const tree = buildTokenTree(dictionary);
+    return buildTokenIndex(tree);
   }, []);
+
+  const handleSelect = useCallback<TokenSelectHandler>(
+    (_path, _value, node) => {
+      setSelected(node);
+    },
+    [],
+  );
 
   return (
     <SidebarProvider
       style={
         {
-          // Deixa a sidebar um pouco mais larga, como o Explorer do VSCode.
           '--sidebar-width': '20rem',
         } as React.CSSProperties
       }
@@ -46,28 +58,36 @@ export function HomePage() {
             <Sparkles className="size-4" />
             <span>POC — Design Tokens Manager</span>
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">Token Explorer</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Gerenciador de Tokens
+          </h1>
           <p className="text-muted-foreground text-sm">
             Selecione um token na árvore à esquerda para ver seus detalhes.
           </p>
         </header>
 
-        <div className="flex flex-1 flex-col gap-6 px-8 py-8">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-8 py-8">
           {selected ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Hash className="size-4" />
-                  <span className="font-mono text-sm">{selected.path}</span>
-                </CardTitle>
-                <CardDescription>Valor bruto do token selecionado.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <pre className="bg-muted/50 overflow-auto rounded-md border p-4 text-xs leading-relaxed">
-                  {JSON.stringify(selected.value, null, 2)}
-                </pre>
-              </CardContent>
-            </Card>
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Hash className="size-4" />
+                    <span className="font-mono text-sm">{selected.path}</span>
+                  </CardTitle>
+                  <CardDescription>
+                    Valor bruto do token selecionado.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <pre className="bg-muted/50 overflow-auto rounded-md border p-4 text-xs leading-relaxed">
+                    {JSON.stringify(selected.value, null, 2)}
+                  </pre>
+                </CardContent>
+              </Card>
+
+              <TokenPreview node={selected} index={tokenIndex} />
+            </>
           ) : (
             <div className="text-muted-foreground flex flex-1 items-center justify-center rounded-lg border border-dashed p-12 text-sm">
               Nenhum token selecionado.

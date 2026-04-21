@@ -113,8 +113,8 @@ const TokenLeaf = memo(function TokenLeaf({ node, depth }: LeafProps) {
   const isSelected = useIsSelected(node.path);
 
   const handleClick = useCallback(() => {
-    onSelect?.(node.path, node.value);
-  }, [onSelect, node.path, node.value]);
+    onSelect?.(node.path, node.value, node);
+  }, [onSelect, node]);
 
   return (
     <button
