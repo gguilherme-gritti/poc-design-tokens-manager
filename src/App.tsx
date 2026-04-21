@@ -1,8 +1,15 @@
+import { DesignSystemTokensPage } from '@/pages/DesignSystemTokensPage';
 import { HomePage } from '@/pages/HomePage';
+import { useDesignSystemStore } from '@/stores/design-system-store';
 
-// `App` é mantido enxuto: agrega providers globais (futuros) e a árvore de páginas.
-// Enquanto a POC tiver uma única tela, renderizamos diretamente a HomePage.
+// `App` mantém a navegação entre a seleção de design system e o workspace de tokens.
 function App() {
+  const activeId = useDesignSystemStore((s) => s.activeDesignSystemId);
+
+  if (activeId) {
+    return <DesignSystemTokensPage />;
+  }
+
   return <HomePage />;
 }
 

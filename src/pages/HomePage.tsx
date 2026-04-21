@@ -1,100 +1,70 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Hash, Sparkles } from 'lucide-react';
+import { Layers, Sparkles } from 'lucide-react';
 
-import {
-  TokenPreview,
-  TokenTree,
-  buildTokenIndex,
-  buildTokenTree,
-  type TokenLeafNode,
-  type TokenSelectHandler,
-} from '@/components/token-tree';
+import { Button } from '@/components/ui/button';
 import {
   Card,
-  CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { SidebarProvider } from '@/components/ui/sidebar';
-import dictionary from '@/dictionary/dictionary-example.json';
+import { designSystemsByDefaultFirst } from '@/design-systems/registry';
+import { useDesignSystemStore } from '@/stores/design-system-store';
 
 export function HomePage() {
-  const [selected, setSelected] = useState<TokenLeafNode | null>(null);
-
-  /**
-   * Índice de tokens para o preview resolver aliases (`{color.grey.500}`) e
-   * referências aninhadas em shadows, text-styles, etc.
-   */
-  const tokenIndex = useMemo(() => {
-    const tree = buildTokenTree(dictionary);
-    return buildTokenIndex(tree);
-  }, []);
-
-  const handleSelect = useCallback<TokenSelectHandler>(
-    (_path, _value, node) => {
-      setSelected(node);
-    },
-    [],
-  );
+  const setActiveId = useDesignSystemStore((s) => s.setActiveDesignSystemId);
+  const systems = designSystemsByDefaultFirst();
 
   return (
-    <SidebarProvider
-      style={
-        {
-          '--sidebar-width': '20rem',
-        } as React.CSSProperties
-      }
-    >
-      <TokenTree
-        title="Design Tokens"
-        data={dictionary}
-        onTokenSelect={handleSelect}
-      />
-
-      <main className="bg-background text-foreground flex min-h-svh w-full flex-col">
-        <header className="flex flex-col gap-1 border-b px-8 py-6">
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
+    <div className="bg-background text-foreground flex min-h-svh flex-col">
+      <header className="border-b px-8 py-10">
+        <div className="text-muted-foreground mx-auto flex max-w-4xl flex-col gap-2">
+          <div className="flex items-center gap-2 text-sm">
             <Sparkles className="size-4" />
             <span>POC — Design Tokens Manager</span>
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Gerenciador de Tokens
+          <h1 className="text-foreground text-3xl font-semibold tracking-tight">
+            Escolha o design system
           </h1>
-          <p className="text-muted-foreground text-sm">
-            Selecione um token na árvore à esquerda para ver seus detalhes.
+          <p className="text-muted-foreground max-w-2xl text-sm leading-relaxed">
+            Cada opção carrega uma árvore de tokens diferente. O padrão da POC
+            usa o dicionário de exemplo; depois da escolha você acessa o
+            visualizador em árvore e o preview do token.
           </p>
-        </header>
+        </div>
+      </header>
 
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-8 py-8">
-          {selected ? (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Hash className="size-4" />
-                    <span className="font-mono text-sm">{selected.path}</span>
-                  </CardTitle>
-                  <CardDescription>
-                    Valor bruto do token selecionado.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <pre className="bg-muted/50 overflow-auto rounded-md border p-4 text-xs leading-relaxed">
-                    {JSON.stringify(selected.value, null, 2)}
-                  </pre>
-                </CardContent>
-              </Card>
-
-              <TokenPreview node={selected} index={tokenIndex} />
-            </>
-          ) : (
-            <div className="text-muted-foreground flex flex-1 items-center justify-center rounded-lg border border-dashed p-12 text-sm">
-              Nenhum token selecionado.
-            </div>
-          )}
+      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 px-8 py-10">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {systems.map((ds) => (
+            <Card
+              key={ds.id}
+              className={ds.isDefault ? 'border-primary/40 shadow-sm' : ''}
+            >
+              <CardHeader className="gap-2">
+                <div className="text-muted-foreground flex items-center gap-2 text-xs font-medium tracking-wide uppercase">
+                  <Layers className="size-3.5" />
+                  {ds.isDefault ? 'Padrão' : 'Design system'}
+                </div>
+                <CardTitle className="text-lg">{ds.name}</CardTitle>
+                <CardDescription className="text-sm leading-relaxed">
+                  {ds.description}
+                </CardDescription>
+              </CardHeader>
+              <CardFooter>
+                <Button
+                  type="button"
+                  className="w-full sm:w-auto"
+                  variant={ds.isDefault ? 'default' : 'secondary'}
+                  onClick={() => setActiveId(ds.id)}
+                >
+                  Gerenciar tokens
+                </Button>
+              </CardFooter>
+            </Card>
+          ))}
         </div>
       </main>
-    </SidebarProvider>
+    </div>
   );
 }
