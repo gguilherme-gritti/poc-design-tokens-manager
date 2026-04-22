@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, Minus, Pencil, Plus } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Minus,
+  Pencil,
+  Plus,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,8 +59,21 @@ export function CommitDialog({
   const [label, setLabel] = useState('');
 
   const grouped = useMemo(() => {
-    const out = { add: [] as PendingChange[], remove: [] as PendingChange[], update: [] as PendingChange[], rename: [] as PendingChange[] };
-    for (const c of pendingChanges) out[c.kind].push(c);
+    const out = {
+      add: [] as PendingChange[],
+      remove: [] as PendingChange[],
+      update: [] as PendingChange[],
+      rename: [] as PendingChange[],
+      disable: [] as PendingChange[],
+      enable: [] as PendingChange[],
+    };
+    for (const c of pendingChanges) {
+      if (c.kind === 'toggle-disabled') {
+        (c.disabled ? out.disable : out.enable).push(c);
+      } else {
+        out[c.kind].push(c);
+      }
+    }
     return out;
   }, [pendingChanges]);
 
@@ -159,6 +180,26 @@ export function CommitDialog({
                   <span className="text-muted-foreground">→</span>
                   <code>{c.toPath}</code>
                 </div>
+              )
+            }
+          />
+          <ChangeGroup
+            title="Desabilitados (view-only)"
+            icon={<EyeOff className="size-3.5 text-amber-500" />}
+            items={grouped.disable}
+            render={(c) =>
+              c.kind === 'toggle-disabled' && (
+                <code className="font-mono text-[11px]">{c.path}</code>
+              )
+            }
+          />
+          <ChangeGroup
+            title="Reabilitados"
+            icon={<Eye className="size-3.5 text-emerald-500" />}
+            items={grouped.enable}
+            render={(c) =>
+              c.kind === 'toggle-disabled' && (
+                <code className="font-mono text-[11px]">{c.path}</code>
               )
             }
           />

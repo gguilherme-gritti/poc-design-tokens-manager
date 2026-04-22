@@ -8,6 +8,8 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  Eye,
+  EyeOff,
   Hash,
   History as HistoryIcon,
   Redo2,
@@ -40,10 +42,15 @@ import { SidebarProvider } from '@/components/ui/sidebar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AddTokenDialog } from '@/components/token-editor/add-token-dialog';
 import { CommitDialog } from '@/components/token-editor/commit-dialog';
+import {
+  DiagnosticsDialog,
+  type DiagnosticsFilter,
+} from '@/components/token-editor/diagnostics-dialog';
 import { HistoryPanel } from '@/components/token-editor/history-panel';
-import { RemoveConfirmDialog } from '@/components/token-editor/remove-confirm-dialog';
 import { TokenEditor } from '@/components/token-editor/token-editor';
 import { getDesignSystemById } from '@/design-systems/registry';
+import { isEffectivelyDisabled } from '@/lib/disabled-paths';
+import { cn } from '@/lib/utils';
 import {
   diagnoseTree,
   indexDiagnostics,
@@ -64,7 +71,7 @@ export function DesignSystemTokensPage() {
     activeId ? s.workspaces[activeId] : undefined,
   );
   const updateLeafValue = useDesignSystemStore((s) => s.updateLeafValue);
-  const removeNode = useDesignSystemStore((s) => s.removeNode);
+  const toggleNodeDisabled = useDesignSystemStore((s) => s.toggleNodeDisabled);
   const addLeaf = useDesignSystemStore((s) => s.addLeaf);
   const addBranch = useDesignSystemStore((s) => s.addBranch);
   const undoLastPendingChange = useDesignSystemStore(
@@ -82,8 +89,10 @@ export function DesignSystemTokensPage() {
   const [tab, setTab] = useState<'tokens' | 'history'>('tokens');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addDialogParent, setAddDialogParent] = useState('');
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [commitOpen, setCommitOpen] = useState(false);
+  const [diagnosticsDialogOpen, setDiagnosticsDialogOpen] = useState(false);
+  const [diagnosticsFilter, setDiagnosticsFilter] =
+    useState<DiagnosticsFilter>('all');
   /**
    * Valor "ao vivo" sendo digitado no `TokenEditor`. Quando `null`, o preview usa o valor
    * persistido no store. Quando não-null, usamos esse valor para renderizar o preview
@@ -111,15 +120,23 @@ export function DesignSystemTokensPage() {
   }, [selectedPath]);
 
   const draft = workspace?.draft;
+  const draftDisabled = workspace?.draftDisabled;
 
   const tree = useMemo(() => (draft ? buildTokenTree(draft) : []), [draft]);
 
   const tokenIndex = useMemo(() => buildTokenIndex(tree), [tree]);
 
-  const diagnostics = useMemo(
-    () => (tree.length ? diagnoseTree(tree, tokenIndex) : []),
-    [tree, tokenIndex],
-  );
+  /**
+   * Tokens desabilitados não precisam ser validados — suas inconsistências não
+   * afetam o design system em uso. Filtramos diagnósticos cujo path (ou qualquer
+   * ancestral) esteja marcado como disabled.
+   */
+  const diagnostics = useMemo(() => {
+    if (!tree.length) return [];
+    const all = diagnoseTree(tree, tokenIndex);
+    if (!draftDisabled) return all;
+    return all.filter((d) => !isEffectivelyDisabled(draftDisabled, d.path));
+  }, [tree, tokenIndex, draftDisabled]);
 
   const diagnosticsContext = useMemo(
     () => ({
@@ -139,6 +156,14 @@ export function DesignSystemTokensPage() {
     return leaves ?? null;
   }, [selectedPath, draft, tokenIndex, tree]);
 
+  const selectedDisabled = useMemo(() => {
+    if (!selectedPath) return { directly: false, effectively: false };
+    return {
+      directly: !!draftDisabled?.[selectedPath],
+      effectively: isEffectivelyDisabled(draftDisabled, selectedPath),
+    };
+  }, [draftDisabled, selectedPath]);
+
   /**
    * Nó usado exclusivamente pelo preview. Quando o editor tem alterações pendentes
    * (`isDirty`), recomputamos uma folha "virtual" com os mesmos heuristics da árvore
@@ -156,6 +181,22 @@ export function DesignSystemTokensPage() {
 
   const handleSelect = useCallback<TokenSelectHandler>((path) => {
     setSelectedPath(path);
+    // Ao abrir/clicar em um token, voltar automaticamente para a aba de edição,
+    // mesmo que o usuário esteja navegando no histórico.
+    setTab('tokens');
+  }, []);
+
+  const openDiagnosticsDialog = useCallback(
+    (filter: DiagnosticsFilter = 'all') => {
+      setDiagnosticsFilter(filter);
+      setDiagnosticsDialogOpen(true);
+    },
+    [],
+  );
+
+  const handleJumpToDiagnosticTarget = useCallback((path: string) => {
+    setSelectedPath(path);
+    setTab('tokens');
   }, []);
 
   const handleBack = useCallback(() => {
@@ -189,32 +230,36 @@ export function DesignSystemTokensPage() {
     [],
   );
 
-  /* ---------------------------- Add / Remove ------------------------------ */
+  /* ---------------------------- Add / Disable ----------------------------- */
 
   const openAddDialog = useCallback((parentPath: string) => {
     setAddDialogParent(parentPath);
     setAddDialogOpen(true);
   }, []);
 
-  const handleRequestRemove = useCallback((path: string) => {
-    setRemoveTarget(path);
-  }, []);
-
-  const handleConfirmRemove = useCallback(() => {
-    if (!activeId || !removeTarget) return;
-    const target = removeTarget;
-    removeNode(activeId, target);
-    if (selectedPath === target || selectedPath?.startsWith(`${target}.`)) {
-      setSelectedPath(null);
-    }
-    toast.success('Token removido', {
-      description: target,
-      action: {
-        label: 'Desfazer',
-        onClick: () => undoLastPendingChange(activeId),
-      },
-    });
-  }, [activeId, removeTarget, removeNode, selectedPath, undoLastPendingChange]);
+  /**
+   * Alterna o estado "desabilitado" (soft-delete) de um token ou grupo.
+   * Diferente do remove destrutivo anterior, o nó permanece na árvore em
+   * modo view-only e pode ser reativado a qualquer momento.
+   */
+  const handleToggleDisabled = useCallback(
+    (path: string) => {
+      if (!activeId || !workspace) return;
+      const willDisable = !workspace.draftDisabled[path];
+      toggleNodeDisabled(activeId, path);
+      toast.success(
+        willDisable ? 'Token desabilitado (view-only)' : 'Token reabilitado',
+        {
+          description: path,
+          action: {
+            label: 'Desfazer',
+            onClick: () => undoLastPendingChange(activeId),
+          },
+        },
+      );
+    },
+    [activeId, workspace, toggleNodeDisabled, undoLastPendingChange],
+  );
 
   const handleAddSubmit = useCallback(
     ({
@@ -311,7 +356,7 @@ export function DesignSystemTokensPage() {
 
   const treeActions: TokenTreeActions = {
     onAddChild: openAddDialog,
-    onRequestRemove: handleRequestRemove,
+    onToggleDisabled: handleToggleDisabled,
   };
 
   return (
@@ -328,6 +373,7 @@ export function DesignSystemTokensPage() {
         onTokenSelect={handleSelect}
         diagnostics={diagnosticsContext}
         actions={treeActions}
+        disabled={workspace.draftDisabled}
         headerSlot={
           <div className="flex flex-col gap-2 px-2 pb-1">
             <Button
@@ -341,14 +387,37 @@ export function DesignSystemTokensPage() {
             </Button>
             <div className="flex flex-wrap gap-1">
               {errorCount > 0 && (
-                <Badge variant="destructive">
-                  <AlertCircle className="size-3" /> {errorCount}
-                </Badge>
+                <button
+                  type="button"
+                  onClick={() => openDiagnosticsDialog('error')}
+                  title={`Ver ${errorCount} erro(s) na árvore`}
+                  className="focus-visible:ring-ring rounded-full transition-transform hover:scale-[1.03] focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <Badge variant="destructive" className="cursor-pointer">
+                    <AlertCircle className="size-3" /> {errorCount}
+                  </Badge>
+                </button>
               )}
               {warningCount > 0 && (
-                <Badge variant="warning">
-                  <AlertTriangle className="size-3" /> {warningCount}
-                </Badge>
+                <button
+                  type="button"
+                  onClick={() => openDiagnosticsDialog('warning')}
+                  title={`Ver ${warningCount} aviso(s) na árvore`}
+                  className="focus-visible:ring-ring rounded-full transition-transform hover:scale-[1.03] focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <Badge variant="warning" className="cursor-pointer">
+                    <AlertTriangle className="size-3" /> {warningCount}
+                  </Badge>
+                </button>
+              )}
+              {(errorCount > 0 || warningCount > 0) && (
+                <button
+                  type="button"
+                  onClick={() => openDiagnosticsDialog('all')}
+                  className="text-muted-foreground hover:text-foreground text-[10px] underline-offset-2 hover:underline"
+                >
+                  Ver todos
+                </button>
               )}
             </div>
           </div>
@@ -470,33 +539,82 @@ export function DesignSystemTokensPage() {
                         <CardTitle className="text-base">
                           Edição do token
                         </CardTitle>
-                        {isDirty && (
+                        {selectedDisabled.effectively && (
+                          <Badge variant="warning">
+                            <EyeOff className="size-3" />
+                            {selectedDisabled.directly
+                              ? 'Desabilitado'
+                              : 'Desabilitado por grupo'}
+                          </Badge>
+                        )}
+                        {isDirty && !selectedDisabled.effectively && (
                           <Badge variant="warning">
                             Edição em andamento
                           </Badge>
                         )}
                       </div>
                       <CardDescription>
-                        Alterações são refletidas no preview em tempo real. Erros
-                        não bloqueiam o salvamento — ficam marcados na árvore.
+                        {selectedDisabled.effectively
+                          ? 'Token em modo view-only. Reabilite para voltar a editar.'
+                          : 'Alterações são refletidas no preview em tempo real. Erros não bloqueiam o salvamento — ficam marcados na árvore.'}
                       </CardDescription>
                     </CardHeader>
+
+                    {/* Banner de reativação + aviso quando disabled */}
+                    {selectedDisabled.effectively && (
+                      <div className="mx-6 -mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+                        <div className="flex items-center gap-2">
+                          <EyeOff className="size-4" />
+                          <span>
+                            {selectedDisabled.directly
+                              ? 'Este token está marcado como desabilitado. Os valores abaixo são somente leitura.'
+                              : 'Um dos grupos ancestrais está desabilitado — reabilite-o para voltar a editar este token.'}
+                          </span>
+                        </div>
+                        {selectedDisabled.directly && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 gap-1.5"
+                            onClick={() => handleToggleDisabled(selectedNode.path)}
+                          >
+                            <Eye className="size-3.5" />
+                            Reabilitar
+                          </Button>
+                        )}
+                      </div>
+                    )}
+
                     <CardContent>
                       <div className="grid gap-6 sm:grid-cols-2">
                         {/* Coluna esquerda: edição */}
-                        <section className="min-w-0 sm:border-r sm:pr-4">
+                        <section
+                          aria-disabled={selectedDisabled.effectively}
+                          className={cn(
+                            'min-w-0 sm:border-r sm:pr-4',
+                            selectedDisabled.effectively &&
+                              'pointer-events-none select-none opacity-60',
+                          )}
+                        >
                           <TokenEditor
                             key={selectedNode.path}
                             node={selectedNode}
                             index={tokenIndex}
                             onSubmit={handleSubmitValue}
                             onValueChange={handleLiveValueChange}
+                            readOnly={selectedDisabled.effectively}
                           />
                         </section>
 
                         {/* Coluna direita: preview ao vivo */}
-                        <section className="flex min-w-0 flex-col gap-2">
-                          {isDirty && (
+                        <section
+                          className={cn(
+                            'flex min-w-0 flex-col gap-2',
+                            selectedDisabled.effectively && 'opacity-70',
+                          )}
+                        >
+                          {isDirty && !selectedDisabled.effectively && (
                             <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400 flex items-center gap-2 rounded-md border border-amber-500/30 px-3 py-1.5 text-[11px]">
                               <Sparkles className="size-3.5" />
                               Preview ao vivo — o valor ainda não foi aplicado.
@@ -542,14 +660,6 @@ export function DesignSystemTokensPage() {
         onSubmit={handleAddSubmit}
       />
 
-      <RemoveConfirmDialog
-        open={!!removeTarget}
-        onOpenChange={(open) => !open && setRemoveTarget(null)}
-        path={removeTarget}
-        tree={draft!}
-        onConfirm={handleConfirmRemove}
-      />
-
       <CommitDialog
         open={commitOpen}
         onOpenChange={setCommitOpen}
@@ -557,6 +667,14 @@ export function DesignSystemTokensPage() {
         diagnostics={diagnostics}
         onConfirm={handleCommit}
         onDiscard={handleDiscard}
+      />
+
+      <DiagnosticsDialog
+        open={diagnosticsDialogOpen}
+        onOpenChange={setDiagnosticsDialogOpen}
+        diagnostics={diagnostics}
+        initialFilter={diagnosticsFilter}
+        onSelectToken={handleJumpToDiagnosticTarget}
       />
     </SidebarProvider>
   );

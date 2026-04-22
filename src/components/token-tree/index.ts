@@ -15,3 +15,4 @@ export type {
   DiagnosticsContextValue,
 } from './diagnostics-context';
 export type { TokenTreeActions } from './actions-context';
+export { usePathDisabledState, useDisabledMap } from './disabled-context';

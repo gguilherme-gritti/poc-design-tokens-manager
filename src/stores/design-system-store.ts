@@ -4,6 +4,7 @@ import { temporal, type TemporalState } from 'zundo';
 
 import type { TokenTreeData } from '@/components/token-tree';
 import { getDesignSystemById } from '@/design-systems/registry';
+import type { DisabledMap } from '@/lib/disabled-paths';
 import {
   addBranchAt,
   addLeafAt,
@@ -52,6 +53,17 @@ export type PendingChange =
       fromPath: string;
       toPath: string;
       timestamp: number;
+    }
+  | {
+      id: string;
+      /**
+       * Soft-delete / soft-restore. Não altera o JSON do token — apenas marca o path
+       * como desabilitado (view-only) no workspace.
+       */
+      kind: 'toggle-disabled';
+      path: string;
+      disabled: boolean;
+      timestamp: number;
     };
 
 export interface HistoryEntry {
@@ -61,6 +73,8 @@ export interface HistoryEntry {
   changes: PendingChange[];
   snapshotBefore: TokenTreeData;
   snapshotAfter: TokenTreeData;
+  snapshotDisabledBefore: DisabledMap;
+  snapshotDisabledAfter: DisabledMap;
 }
 
 export interface DesignSystemWorkspace {
@@ -68,6 +82,10 @@ export interface DesignSystemWorkspace {
   draft: TokenTreeData;
   /** Última versão "salva" — serve de baseline para diff e descarte. */
   baseline: TokenTreeData;
+  /** Paths marcados como desabilitados na versão de edição. */
+  draftDisabled: DisabledMap;
+  /** Paths desabilitados na baseline (para descarte). */
+  baselineDisabled: DisabledMap;
   /** Alterações acumuladas desde o último commit. */
   pendingChanges: PendingChange[];
   history: HistoryEntry[];
@@ -83,6 +101,8 @@ interface DesignSystemStoreState {
 
   updateLeafValue: (id: string, path: string, newValue: unknown) => void;
   removeNode: (id: string, path: string) => void;
+  /** Marca (ou desmarca) um path como desabilitado. Soft-delete sem remover o nó. */
+  toggleNodeDisabled: (id: string, path: string) => void;
   addLeaf: (
     id: string,
     parentPath: string,
@@ -156,6 +176,8 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
             [id]: {
               draft: cloned,
               baseline: deepClone(definition.data),
+              draftDisabled: {},
+              baselineDisabled: {},
               pendingChanges: [],
               history: [],
             },
@@ -196,6 +218,32 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
             kind: 'remove',
             path,
             previous: snapshot,
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      /**
+       * Soft-delete: alterna a flag "disabled" de um path. O token permanece na árvore
+       * e pode ser reativado. Não modifica o JSON do token.
+       */
+      toggleNodeDisabled: (id, path) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        if (getAt(current.draft, path) === undefined) return;
+        const wasDisabled = current.draftDisabled[path] === true;
+        const nextWorkspace = produce(current, (wip) => {
+          if (wasDisabled) {
+            delete wip.draftDisabled[path];
+          } else {
+            wip.draftDisabled[path] = true;
+          }
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'toggle-disabled',
+            path,
+            disabled: !wasDisabled,
             timestamp: now(),
           });
         });
@@ -272,7 +320,7 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
         if (!current || current.pendingChanges.length === 0) return;
         const last = current.pendingChanges[current.pendingChanges.length - 1];
         const nextWorkspace = produce(current, (wip) => {
-          applyInverse(wip.draft, last);
+          applyInverse(wip, last);
           wip.pendingChanges.pop();
         });
         set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
@@ -288,10 +336,13 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
           changes: current.pendingChanges,
           snapshotBefore: deepClone(current.baseline),
           snapshotAfter: deepClone(current.draft),
+          snapshotDisabledBefore: deepClone(current.baselineDisabled),
+          snapshotDisabledAfter: deepClone(current.draftDisabled),
         };
         const nextWorkspace: DesignSystemWorkspace = {
           ...current,
           baseline: deepClone(current.draft),
+          baselineDisabled: deepClone(current.draftDisabled),
           pendingChanges: [],
           history: [entry, ...current.history],
         };
@@ -305,6 +356,7 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
         const nextWorkspace: DesignSystemWorkspace = {
           ...current,
           draft: deepClone(current.baseline),
+          draftDisabled: deepClone(current.baselineDisabled),
           pendingChanges: [],
         };
         set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
@@ -322,11 +374,15 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
           changes: [],
           snapshotBefore: deepClone(current.baseline),
           snapshotAfter: deepClone(entry.snapshotAfter),
+          snapshotDisabledBefore: deepClone(current.baselineDisabled),
+          snapshotDisabledAfter: deepClone(entry.snapshotDisabledAfter),
         };
         const nextWorkspace: DesignSystemWorkspace = {
           ...current,
           draft: deepClone(entry.snapshotAfter),
           baseline: deepClone(entry.snapshotAfter),
+          draftDisabled: deepClone(entry.snapshotDisabledAfter),
+          baselineDisabled: deepClone(entry.snapshotDisabledAfter),
           pendingChanges: [],
           history: [newCommit, ...current.history],
         };
@@ -341,6 +397,7 @@ export const useDesignSystemStore = create<DesignSystemStoreState>()(
         for (const [id, ws] of Object.entries(state.workspaces)) {
           snapshot[id] = {
             draft: ws.draft,
+            draftDisabled: ws.draftDisabled,
             pendingChanges: ws.pendingChanges,
           };
         }
@@ -371,11 +428,13 @@ export function getTemporalDesignSystemState(): TemporalDesignSystemState {
 
 /**
  * Aplica o "inverso" de uma mudança, usado em `undoLastPendingChange`.
+ * Opera diretamente sobre o workspace (draft + draftDisabled).
  */
 function applyInverse(
-  draft: TokenTreeData,
+  workspace: DesignSystemWorkspace,
   change: PendingChange,
 ): void {
+  const { draft } = workspace;
   switch (change.kind) {
     case 'add':
       removeAt(draft, change.path);
@@ -399,6 +458,14 @@ function applyInverse(
     }
     case 'rename':
       renameAt(draft, change.toPath, lastSegment(change.fromPath));
+      return;
+    case 'toggle-disabled':
+      // Inverte: se a mudança foi "desabilitou", agora reabilita (e vice-versa).
+      if (change.disabled) {
+        delete workspace.draftDisabled[change.path];
+      } else {
+        workspace.draftDisabled[change.path] = true;
+      }
       return;
   }
 }

@@ -9,6 +9,8 @@ import {
   SidebarInput,
 } from '@/components/ui/sidebar';
 
+import type { DisabledMap } from '@/lib/disabled-paths';
+
 import { createSelectionStore, SelectionStoreContext } from './selection-store';
 import {
   DiagnosticsContext,
@@ -18,6 +20,7 @@ import {
   TokenTreeActionsContext,
   type TokenTreeActions,
 } from './actions-context';
+import { DisabledContext } from './disabled-context';
 import { TokenSelectContext } from './token-select-context';
 import { TokenTreeNode } from './token-tree-node';
 import type { TokenNode, TokenSelectHandler, TokenTreeData } from './types';
@@ -32,6 +35,10 @@ export interface TokenTreeProps {
   diagnostics?: DiagnosticsContextValue;
   /** Ações inline (adicionar filho, remover) mostradas em hover nos nós. */
   actions?: TokenTreeActions;
+  /**
+   * Paths marcados como "soft-disabled" (view-only). Descendentes herdam a condição.
+   */
+  disabled?: DisabledMap;
   /** Conteúdo renderizado acima do campo de busca (ex.: botão Salvar). */
   headerSlot?: React.ReactNode;
   /** Conteúdo renderizado abaixo da árvore (ex.: botão Adicionar no topo). */
@@ -45,6 +52,7 @@ export const TokenTree = memo(function TokenTree({
   searchable = true,
   diagnostics,
   actions,
+  disabled,
   headerSlot,
   footerSlot,
 }: TokenTreeProps) {
@@ -75,10 +83,16 @@ export const TokenTree = memo(function TokenTree({
 
   const actionsValue = useMemo<TokenTreeActions>(() => actions ?? {}, [actions]);
 
+  const disabledValue = useMemo<DisabledMap>(
+    () => disabled ?? {},
+    [disabled],
+  );
+
   return (
     <SelectionStoreContext.Provider value={storeRef.current}>
       <DiagnosticsContext.Provider value={diagnosticsValue}>
         <TokenTreeActionsContext.Provider value={actionsValue}>
+          <DisabledContext.Provider value={disabledValue}>
           <TokenSelectContext.Provider value={handleSelect}>
             <Sidebar collapsible="none" className="h-svh border-r">
               <SidebarHeader className="gap-2 border-b">
@@ -116,6 +130,7 @@ export const TokenTree = memo(function TokenTree({
               </SidebarContent>
             </Sidebar>
           </TokenSelectContext.Provider>
+          </DisabledContext.Provider>
         </TokenTreeActionsContext.Provider>
       </DiagnosticsContext.Provider>
     </SelectionStoreContext.Provider>

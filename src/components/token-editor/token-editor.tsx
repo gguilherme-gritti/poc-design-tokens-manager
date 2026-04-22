@@ -23,6 +23,11 @@ interface TokenEditorProps {
    * O segundo argumento informa se o valor difere do persistido no store (`hasChanges`).
    */
   onValueChange?: (liveValue: unknown, hasChanges: boolean) => void;
+  /**
+   * Quando `true`, todos os inputs ficam bloqueados e o botão de salvar oculto.
+   * Usado para tokens desabilitados (view-only).
+   */
+  readOnly?: boolean;
 }
 
 type EditorMode = 'literal' | 'alias' | 'object';
@@ -57,6 +62,7 @@ export function TokenEditor({
   index,
   onSubmit,
   onValueChange,
+  readOnly = false,
 }: TokenEditorProps) {
   const initialMode = useMemo(() => detectMode(node.value), [node.value]);
   const [mode, setMode] = useState<EditorMode>(initialMode);
@@ -192,6 +198,8 @@ export function TokenEditor({
               onChange={(e) => setLiteral(e.target.value)}
               placeholder='Ex.: "#FF00AA", "16px", 400'
               className="font-mono text-xs"
+              disabled={readOnly}
+              readOnly={readOnly}
             />
             <p className="text-muted-foreground text-[11px]">
               Números e booleanos são convertidos automaticamente; strings são
@@ -231,6 +239,8 @@ export function TokenEditor({
               }}
               rows={8}
               className="font-mono text-xs"
+              disabled={readOnly}
+              readOnly={readOnly}
             />
             {jsonError && (
               <p className="text-destructive text-[11px]">{jsonError}</p>
@@ -254,13 +264,19 @@ export function TokenEditor({
         </p>
       )}
 
+      {readOnly && (
+        <p className="text-muted-foreground text-[11px] italic">
+          Token em modo view-only — reabilite-o para poder editar.
+        </p>
+      )}
+
       <div className="flex items-center justify-end gap-2 border-t pt-3">
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={handleReset}
-          disabled={!hasChanges}
+          disabled={!hasChanges || readOnly}
         >
           <Undo2 className="size-3.5" />
           Restaurar
@@ -269,7 +285,7 @@ export function TokenEditor({
           type="button"
           size="sm"
           onClick={handleSubmit}
-          disabled={!canSubmit}
+          disabled={!canSubmit || readOnly}
         >
           <Save className="size-3.5" />
           Aplicar alteração

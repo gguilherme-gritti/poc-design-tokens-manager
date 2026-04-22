@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
+  Eye,
+  EyeOff,
   History as HistoryIcon,
   Minus,
   Pencil,
@@ -92,6 +94,18 @@ export function HistoryPanel({ history, onRestore }: HistoryPanelProps) {
                 {counts.rename > 0 && (
                   <Badge variant="warning">↻{counts.rename}</Badge>
                 )}
+                {counts.disable > 0 && (
+                  <Badge variant="warning">
+                    <EyeOff className="size-2.5" />
+                    {counts.disable}
+                  </Badge>
+                )}
+                {counts.enable > 0 && (
+                  <Badge variant="success">
+                    <Eye className="size-2.5" />
+                    {counts.enable}
+                  </Badge>
+                )}
               </div>
             </button>
           );
@@ -131,8 +145,22 @@ export function HistoryPanel({ history, onRestore }: HistoryPanelProps) {
 }
 
 function summarizeChangeCounts(entry: HistoryEntry) {
-  const counts = { add: 0, remove: 0, update: 0, rename: 0 };
-  for (const c of entry.changes) counts[c.kind] += 1;
+  const counts = {
+    add: 0,
+    remove: 0,
+    update: 0,
+    rename: 0,
+    disable: 0,
+    enable: 0,
+  };
+  for (const c of entry.changes) {
+    if (c.kind === 'toggle-disabled') {
+      if (c.disabled) counts.disable += 1;
+      else counts.enable += 1;
+    } else {
+      counts[c.kind] += 1;
+    }
+  }
   return counts;
 }
 
