@@ -107,11 +107,51 @@ function getResolvedPreview(node: TokenLeafNode, index: TokenIndex): ResolvedPre
 interface TokenPreviewProps {
   node: TokenLeafNode;
   index: TokenIndex;
+  /**
+   * Quando `true`, renderiza apenas o conteúdo interno (sem `Card`/`CardHeader`),
+   * para ser embutido em outro card (ex.: dentro do card de edição).
+   */
+  embedded?: boolean;
 }
 
-export const TokenPreview = memo(function TokenPreview({ node, index }: TokenPreviewProps) {
+export const TokenPreview = memo(function TokenPreview({
+  node,
+  index,
+  embedded = false,
+}: TokenPreviewProps) {
   const preview = useMemo(() => getResolvedPreview(node, index), [node, index]);
   const typeLabel = preview.resolvedFrom?.attributes?.type ?? node.attributes?.type ?? preview.kind;
+
+  const body = (
+    <>
+      {preview.resolvedFrom && (
+        <div className="text-muted-foreground flex items-center gap-2 text-xs">
+          <CornerDownRight className="size-3.5" />
+          <span>Alias resolvido para</span>
+          <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
+            {preview.resolvedFrom.path}
+          </code>
+        </div>
+      )}
+
+      <PreviewSurface kind={preview.kind} cssValue={preview.cssValue} node={node} />
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Eye className="size-4" />
+          Preview
+          <span className="bg-muted text-muted-foreground ml-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide">
+            {typeLabel}
+          </span>
+        </div>
+        {body}
+      </div>
+    );
+  }
 
   return (
     <Card>
@@ -127,19 +167,7 @@ export const TokenPreview = memo(function TokenPreview({ node, index }: TokenPre
           Representação visual do token aplicado em um elemento.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {preview.resolvedFrom && (
-          <div className="text-muted-foreground flex items-center gap-2 text-xs">
-            <CornerDownRight className="size-3.5" />
-            <span>Alias resolvido para</span>
-            <code className="bg-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
-              {preview.resolvedFrom.path}
-            </code>
-          </div>
-        )}
-
-        <PreviewSurface kind={preview.kind} cssValue={preview.cssValue} node={node} />
-      </CardContent>
+      <CardContent className="flex flex-col gap-4">{body}</CardContent>
     </Card>
   );
 });

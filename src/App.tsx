@@ -1,3 +1,4 @@
+import { Toaster } from '@/components/ui/sonner';
 import { DesignSystemTokensPage } from '@/pages/DesignSystemTokensPage';
 import { HomePage } from '@/pages/HomePage';
 import { useDesignSystemStore } from '@/stores/design-system-store';
@@ -6,11 +7,12 @@ import { useDesignSystemStore } from '@/stores/design-system-store';
 function App() {
   const activeId = useDesignSystemStore((s) => s.activeDesignSystemId);
 
-  if (activeId) {
-    return <DesignSystemTokensPage />;
-  }
-
-  return <HomePage />;
+  return (
+    <>
+      {activeId ? <DesignSystemTokensPage /> : <HomePage />}
+      <Toaster />
+    </>
+  );
 }
 
 export default App;

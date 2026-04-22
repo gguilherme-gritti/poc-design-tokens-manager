@@ -1,11 +1,404 @@
-import { create } from 'zustand';
+import { enableMapSet, produce } from 'immer';
+import { create, useStore } from 'zustand';
+import { temporal, type TemporalState } from 'zundo';
 
-interface DesignSystemStore {
-  activeDesignSystemId: string | null;
-  setActiveDesignSystemId: (id: string | null) => void;
+import type { TokenTreeData } from '@/components/token-tree';
+import { getDesignSystemById } from '@/design-systems/registry';
+import {
+  addBranchAt,
+  addLeafAt,
+  existsAt,
+  getAt,
+  isLeafObject,
+  lastSegment,
+  parentPath as parentOf,
+  removeAt,
+  renameAt,
+  setLeafValueAt,
+} from '@/lib/token-mutations';
+
+enableMapSet();
+
+/* -------------------------------------------------------------------------- */
+/*                                    Types                                   */
+/* -------------------------------------------------------------------------- */
+
+export type PendingChange =
+  | {
+      id: string;
+      kind: 'add';
+      path: string;
+      token: unknown;
+      timestamp: number;
+    }
+  | {
+      id: string;
+      kind: 'remove';
+      path: string;
+      previous: unknown;
+      timestamp: number;
+    }
+  | {
+      id: string;
+      kind: 'update';
+      path: string;
+      before: unknown;
+      after: unknown;
+      timestamp: number;
+    }
+  | {
+      id: string;
+      kind: 'rename';
+      fromPath: string;
+      toPath: string;
+      timestamp: number;
+    };
+
+export interface HistoryEntry {
+  id: string;
+  timestamp: number;
+  label?: string;
+  changes: PendingChange[];
+  snapshotBefore: TokenTreeData;
+  snapshotAfter: TokenTreeData;
 }
 
-export const useDesignSystemStore = create<DesignSystemStore>((set) => ({
-  activeDesignSystemId: null,
-  setActiveDesignSystemId: (id) => set({ activeDesignSystemId: id }),
-}));
+export interface DesignSystemWorkspace {
+  /** Versão em edição (working copy). */
+  draft: TokenTreeData;
+  /** Última versão "salva" — serve de baseline para diff e descarte. */
+  baseline: TokenTreeData;
+  /** Alterações acumuladas desde o último commit. */
+  pendingChanges: PendingChange[];
+  history: HistoryEntry[];
+}
+
+interface DesignSystemStoreState {
+  activeDesignSystemId: string | null;
+  workspaces: Record<string, DesignSystemWorkspace>;
+
+  setActiveDesignSystemId: (id: string | null) => void;
+  /** Cria (ou preserva) um workspace para o id dado, clonando o JSON do registry. */
+  ensureWorkspace: (id: string) => void;
+
+  updateLeafValue: (id: string, path: string, newValue: unknown) => void;
+  removeNode: (id: string, path: string) => void;
+  addLeaf: (
+    id: string,
+    parentPath: string,
+    name: string,
+    value: unknown,
+    attributes?: Record<string, unknown>,
+  ) => void;
+  addBranch: (id: string, parentPath: string, name: string) => void;
+  renameNode: (id: string, path: string, newName: string) => string | null;
+
+  undoLastPendingChange: (id: string) => void;
+
+  commit: (id: string, label?: string) => HistoryEntry | null;
+  discard: (id: string) => void;
+  /** Cria um novo commit que reverte o estado para o snapshot daquela entrada. */
+  restoreHistoryEntry: (id: string, historyEntryId: string) => void;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Helpers                                   */
+/* -------------------------------------------------------------------------- */
+
+function deepClone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function makeId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function now(): number {
+  return Date.now();
+}
+
+function recordChange(
+  workspace: DesignSystemWorkspace,
+  change: PendingChange,
+): void {
+  workspace.pendingChanges.push(change);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Store                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Store com `temporal` middleware (zundo). O histórico temporal (undo/redo da sessão)
+ * rastreia APENAS o campo `workspaces` para evitar que mudar o design system ativo
+ * polua o undo stack com algo que não é uma edição "real".
+ */
+export const useDesignSystemStore = create<DesignSystemStoreState>()(
+  temporal(
+    (set, get) => ({
+      activeDesignSystemId: null,
+      workspaces: {},
+
+      setActiveDesignSystemId: (id) => set({ activeDesignSystemId: id }),
+
+      ensureWorkspace: (id) => {
+        const state = get();
+        if (state.workspaces[id]) return;
+        const definition = getDesignSystemById(id);
+        if (!definition) return;
+        const cloned = deepClone(definition.data);
+        set({
+          workspaces: {
+            ...state.workspaces,
+            [id]: {
+              draft: cloned,
+              baseline: deepClone(definition.data),
+              pendingChanges: [],
+              history: [],
+            },
+          },
+        });
+      },
+
+      updateLeafValue: (id, path, newValue) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const node = getAt(current.draft, path);
+        if (!isLeafObject(node)) return;
+        const before = deepClone(node.value);
+        const nextWorkspace = produce(current, (wip) => {
+          setLeafValueAt(wip.draft, path, newValue);
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'update',
+            path,
+            before,
+            after: deepClone(newValue),
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      removeNode: (id, path) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const previous = getAt(current.draft, path);
+        if (previous === undefined) return;
+        const snapshot = deepClone(previous);
+        const nextWorkspace = produce(current, (wip) => {
+          removeAt(wip.draft, path);
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'remove',
+            path,
+            previous: snapshot,
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      addLeaf: (id, parentPath, name, value, attributes) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const fullPath = parentPath ? `${parentPath}.${name}` : name;
+        if (existsAt(current.draft, fullPath)) {
+          throw new Error(`Já existe um token em "${fullPath}".`);
+        }
+        const nextWorkspace = produce(current, (wip) => {
+          addLeafAt(wip.draft, fullPath, value, attributes);
+          const inserted = getAt(wip.draft, fullPath);
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'add',
+            path: fullPath,
+            token: deepClone(inserted),
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      addBranch: (id, parentPath, name) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const fullPath = parentPath ? `${parentPath}.${name}` : name;
+        if (existsAt(current.draft, fullPath)) {
+          throw new Error(`Já existe um grupo em "${fullPath}".`);
+        }
+        const nextWorkspace = produce(current, (wip) => {
+          addBranchAt(wip.draft, fullPath);
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'add',
+            path: fullPath,
+            token: {},
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      renameNode: (id, path, newName) => {
+        const current = get().workspaces[id];
+        if (!current) return null;
+        if (lastSegment(path) === newName) return path;
+        const parent = parentOf(path);
+        let renamedTo: string | null = null;
+        const nextWorkspace = produce(current, (wip) => {
+          renamedTo = renameAt(wip.draft, path, newName);
+          recordChange(wip, {
+            id: makeId(),
+            kind: 'rename',
+            fromPath: path,
+            toPath: parent ? `${parent}.${newName}` : newName,
+            timestamp: now(),
+          });
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+        return renamedTo;
+      },
+
+      /**
+       * Desfaz a última mudança pendente re-aplicando o estado prévio armazenado no
+       * `PendingChange`. Serve de "Undo" para o toast, complementar ao `zundo` (sessão).
+       */
+      undoLastPendingChange: (id) => {
+        const current = get().workspaces[id];
+        if (!current || current.pendingChanges.length === 0) return;
+        const last = current.pendingChanges[current.pendingChanges.length - 1];
+        const nextWorkspace = produce(current, (wip) => {
+          applyInverse(wip.draft, last);
+          wip.pendingChanges.pop();
+        });
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      commit: (id, label) => {
+        const current = get().workspaces[id];
+        if (!current || current.pendingChanges.length === 0) return null;
+        const entry: HistoryEntry = {
+          id: makeId(),
+          timestamp: now(),
+          label,
+          changes: current.pendingChanges,
+          snapshotBefore: deepClone(current.baseline),
+          snapshotAfter: deepClone(current.draft),
+        };
+        const nextWorkspace: DesignSystemWorkspace = {
+          ...current,
+          baseline: deepClone(current.draft),
+          pendingChanges: [],
+          history: [entry, ...current.history],
+        };
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+        return entry;
+      },
+
+      discard: (id) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const nextWorkspace: DesignSystemWorkspace = {
+          ...current,
+          draft: deepClone(current.baseline),
+          pendingChanges: [],
+        };
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+
+      restoreHistoryEntry: (id, historyEntryId) => {
+        const current = get().workspaces[id];
+        if (!current) return;
+        const entry = current.history.find((h) => h.id === historyEntryId);
+        if (!entry) return;
+        const newCommit: HistoryEntry = {
+          id: makeId(),
+          timestamp: now(),
+          label: `Revert para "${entry.label ?? entry.id.slice(0, 6)}"`,
+          changes: [],
+          snapshotBefore: deepClone(current.baseline),
+          snapshotAfter: deepClone(entry.snapshotAfter),
+        };
+        const nextWorkspace: DesignSystemWorkspace = {
+          ...current,
+          draft: deepClone(entry.snapshotAfter),
+          baseline: deepClone(entry.snapshotAfter),
+          pendingChanges: [],
+          history: [newCommit, ...current.history],
+        };
+        set({ workspaces: { ...get().workspaces, [id]: nextWorkspace } });
+      },
+    }),
+    {
+      // zundo rastreia apenas as árvores dos workspaces — não o id ativo, nem o histórico
+      // (histórico já é persistente por definição; undo/redo é para a sessão de edição).
+      partialize: (state) => {
+        const snapshot: Record<string, unknown> = {};
+        for (const [id, ws] of Object.entries(state.workspaces)) {
+          snapshot[id] = {
+            draft: ws.draft,
+            pendingChanges: ws.pendingChanges,
+          };
+        }
+        return { workspaces: snapshot } as unknown as DesignSystemStoreState;
+      },
+      limit: 50,
+      equality: (past, current) => past === current,
+    },
+  ),
+);
+
+type TemporalDesignSystemState = TemporalState<Partial<DesignSystemStoreState>>;
+
+/**
+ * Hook para consumir o store "temporal" (pastStates, futureStates, undo, redo).
+ * Uso: `const past = useTemporalDesignSystemStore((s) => s.pastStates.length);`
+ */
+export function useTemporalDesignSystemStore<T>(
+  selector: (state: TemporalDesignSystemState) => T,
+): T {
+  return useStore(useDesignSystemStore.temporal, selector);
+}
+
+/** Acesso síncrono ao estado temporal (undo/redo imperativos). */
+export function getTemporalDesignSystemState(): TemporalDesignSystemState {
+  return useDesignSystemStore.temporal.getState() as TemporalDesignSystemState;
+}
+
+/**
+ * Aplica o "inverso" de uma mudança, usado em `undoLastPendingChange`.
+ */
+function applyInverse(
+  draft: TokenTreeData,
+  change: PendingChange,
+): void {
+  switch (change.kind) {
+    case 'add':
+      removeAt(draft, change.path);
+      return;
+    case 'remove': {
+      const parentSegments = change.path.split('.');
+      const key = parentSegments.pop() ?? '';
+      const parentPathStr = parentSegments.join('.');
+      const parent = parentPathStr
+        ? (getAt(draft, parentPathStr) as Record<string, unknown> | undefined)
+        : (draft as Record<string, unknown>);
+      if (!parent || typeof parent !== 'object') return;
+      (parent as Record<string, unknown>)[key] = change.previous;
+      return;
+    }
+    case 'update': {
+      const node = getAt(draft, change.path);
+      if (!isLeafObject(node)) return;
+      (node as { value: unknown }).value = change.before;
+      return;
+    }
+    case 'rename':
+      renameAt(draft, change.toPath, lastSegment(change.fromPath));
+      return;
+  }
+}

@@ -70,6 +70,35 @@ function summarizeValue(value: unknown): string {
 }
 
 /**
+ * Cria uma folha normalizada a partir de `path + value + attributes` (sem passar por
+ * `buildTokenTree`). Útil para preview em tempo real, onde queremos simular como a
+ * árvore enxergaria um valor "rascunho" antes de commitar na store.
+ *
+ * Aplica as mesmas heurísticas de `buildTokenTree` (detectColor, detectAlias,
+ * extractColorPreview, summarizeValue) para manter o comportamento consistente.
+ */
+export function buildLeafNode(
+  path: string,
+  value: unknown,
+  attributes?: TokenLeafAttributes,
+): Extract<TokenNode, { kind: 'leaf' }> {
+  const name = path.split('.').pop() ?? path;
+  const isColor = detectColor(path, attributes);
+  const isAlias = detectAlias(value);
+  return {
+    kind: 'leaf',
+    name,
+    path,
+    value,
+    displayValue: summarizeValue(value),
+    attributes,
+    isColor,
+    isAlias,
+    colorPreview: isColor ? extractColorPreview(value) : null,
+  };
+}
+
+/**
  * Converte o JSON bruto em uma árvore normalizada.
  * Executado uma única vez (via useMemo) para a raiz, para evitar recomputação em re-renders.
  */
