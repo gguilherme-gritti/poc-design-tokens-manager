@@ -16,6 +16,7 @@ import {
   Save,
   Sparkles,
   Undo2,
+  Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -28,6 +29,7 @@ import {
   type TokenLeafNode,
   type TokenSelectHandler,
   type TokenTreeActions,
+  type TokenTreeData,
 } from '@/components/token-tree';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,7 +50,7 @@ import {
 } from '@/components/token-editor/diagnostics-dialog';
 import { HistoryPanel } from '@/components/token-editor/history-panel';
 import { TokenEditor } from '@/components/token-editor/token-editor';
-import { getDesignSystemById } from '@/design-systems/registry';
+import { ImportTokensDialog } from '@/components/design-system/import-tokens-dialog';
 import { isEffectivelyDisabled } from '@/lib/disabled-paths';
 import { cn } from '@/lib/utils';
 import {
@@ -66,7 +68,9 @@ import {
 export function DesignSystemTokensPage() {
   const activeId = useDesignSystemStore((s) => s.activeDesignSystemId);
   const setActiveId = useDesignSystemStore((s) => s.setActiveDesignSystemId);
-  const ensureWorkspace = useDesignSystemStore((s) => s.ensureWorkspace);
+  const definition = useDesignSystemStore((s) =>
+    activeId ? s.designSystems.find((d) => d.id === activeId) : undefined,
+  );
   const workspace = useDesignSystemStore((s) =>
     activeId ? s.workspaces[activeId] : undefined,
   );
@@ -82,14 +86,14 @@ export function DesignSystemTokensPage() {
   const restoreHistoryEntry = useDesignSystemStore(
     (s) => s.restoreHistoryEntry,
   );
-
-  const definition = activeId ? getDesignSystemById(activeId) : undefined;
+  const applyImport = useDesignSystemStore((s) => s.applyImport);
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [tab, setTab] = useState<'tokens' | 'history'>('tokens');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addDialogParent, setAddDialogParent] = useState('');
   const [commitOpen, setCommitOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [diagnosticsDialogOpen, setDiagnosticsDialogOpen] = useState(false);
   const [diagnosticsFilter, setDiagnosticsFilter] =
     useState<DiagnosticsFilter>('all');
@@ -100,10 +104,6 @@ export function DesignSystemTokensPage() {
    */
   const [liveValue, setLiveValue] = useState<unknown>(null);
   const [isDirty, setIsDirty] = useState(false);
-
-  useEffect(() => {
-    if (activeId) ensureWorkspace(activeId);
-  }, [activeId, ensureWorkspace]);
 
   useEffect(() => {
     if (activeId && !definition) setActiveId(null);
@@ -462,6 +462,17 @@ export function DesignSystemTokensPage() {
               </Button>
               <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setImportOpen(true)}
+                title="Importar árvore de tokens a partir de um .zip (Style Dictionary)"
+              >
+                <Upload className="size-3.5" />
+                Importar ZIP
+              </Button>
+              <Button
+                type="button"
                 size="sm"
                 className="gap-2"
                 onClick={() => setCommitOpen(true)}
@@ -675,6 +686,25 @@ export function DesignSystemTokensPage() {
         diagnostics={diagnostics}
         initialFilter={diagnosticsFilter}
         onSelectToken={handleJumpToDiagnosticTarget}
+      />
+
+      <ImportTokensDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        currentTree={draft!}
+        onConfirm={(tree: TokenTreeData, label?: string) => {
+          if (!activeId) return;
+          const result = applyImport(activeId, tree, { label });
+          if (!result.entry) {
+            toast.info('Nenhuma diferença detectada — nada a importar.');
+            return;
+          }
+          setSelectedPath(null);
+          toast.success('Import aplicado e salvo no histórico.', {
+            description: `+${result.added} / ~${result.updated} / −${result.removed}`,
+          });
+          setTab('history');
+        }}
       />
     </SidebarProvider>
   );
